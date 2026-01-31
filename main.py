@@ -1,13 +1,21 @@
 import cv2
-image = cv2.imread('images.jpg')
-gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-resized_image = cv2.resize(gray_image, (500, 500))
-cv2.imshow('Processed Image', resized_image)
-key = cv2.waitKey(0)
-if key == ord('s'):
-    cv2.imwrite('grayscale_resized_image.jpg', resized_image)
-    print("Image saved as grayscale_resized_image.jpg")
-else:
-    print("Image not saved")
+import os
+image_path = "images.jpg"
+output_dir = "resized_images"
+os.makedirs(output_dir, exist_ok=True)
+sizes = {
+    "small": {320, 240},
+    "medium": {640, 480},
+    "large": {1024, 768}
+}
+image = cv2.imread(image_path)
+if image is None:
+    raise FileNotFoundError(f"Could not load image: {image_path}")
+for name, (width, height) in sizes.items():
+    resized = cv2.resize(image, (width, height), interpolation=cv2.INTER_AREA)
+    window_name = f"{name} ({width}x{height})"
+    cv2.imshow(window_name, resized)
+    output_path = os.path.join(output_dir, f"{name}.jpg")
+    cv2.imwrite(output_path, resized)
+cv2.waitKey(0)
 cv2.destroyAllWindows()
-print(f"Processed Image Dimensions: {resized_image.shape}")
