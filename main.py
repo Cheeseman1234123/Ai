@@ -1,21 +1,16 @@
 import cv2
-import os
-image_path = "images.jpg"
-output_dir = "resized_images"
-os.makedirs(output_dir, exist_ok=True)
-sizes = {
-    "small": {320, 240},
-    "medium": {640, 480},
-    "large": {1024, 768}
-}
-image = cv2.imread(image_path)
-if image is None:
-    raise FileNotFoundError(f"Could not load image: {image_path}")
-for name, (width, height) in sizes.items():
-    resized = cv2.resize(image, (width, height), interpolation=cv2.INTER_AREA)
-    window_name = f"{name} ({width}x{height})"
-    cv2.imshow(window_name, resized)
-    output_path = os.path.join(output_dir, f"{name}.jpg")
-    cv2.imwrite(output_path, resized)
-cv2.waitKey(0)
-cv2.destroyAllWindows()
+import matplotlib.pyplot as plt
+image = cv2.imread('images.jpg')
+image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+plt.imshow(image_rgb)
+plt.title("RGB Image")
+plt.show()
+gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+plt.imshow(gray_image)
+plt.title("Gray Image")
+plt.show()
+cropped_image = image[100:300, 200:400]
+cropped_rgb = cv2.cvtColor(cropped_image, cv2.COLOR_BGR2RGB)
+plt.imshow(cropped_rgb)
+plt.title("Cropped Region")
+plt.show()
