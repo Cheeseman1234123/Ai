@@ -1,33 +1,63 @@
 import cv2
-# Load pre-trained Haar Cascade Classifier for face detection
-face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-# Initialize video capture (use webcam)
-cap = cv2.VideoCapture(0)
-if not cap.isOpened():
-    print("Error: Could not open webcam.")
-    exit()
-while True:
-    # Capture frame-by-frame
-    ret, frame = cap.read()
-    if not ret:
-        print("Error: Failed to capture image")
-        break
-    # Convert frame to grayscale
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    # Detect faces in the grayscale image
-    faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
-    # Draw rectangles around faces
-    for (x, y, w, h) in faces:
-        cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 0, 0), 2)
-    # Display the count of faces
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    cv2.putText(frame, f'People Count: {len(faces)}', (10, 30), font, 1, (255, 0, 0), 2, cv2.LINE_AA)
-    # Display the frame with face detection and people count
-    cv2.imshow('Face Tracking and Counting', frame)
-    # Exit the loop when the 'q' key is pressed
-    if cv2.waitKey(1) & 0xFF == ord('q'):
-        break
-
-# Release the webcam and close the window
-cap.release()
-cv2.destroyAllWindows()
+import numpy as np
+def apply_filter(image, ftype):
+    """Apply a filter to the image based on the filter type."""
+    img = image.copy()
+    if ftype == "red_tint":
+        img[:, :, 1] = img[:, :, 0]= 0
+    elif ftype == "blue_tint":
+        img[:, :, 0] = img[:, :, 2]= 0
+    elif ftype == "green_tint":
+        img[:, :, 1] = img[:, :, 2]= 0
+    elif ftype == "sobel":
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        sx = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
+        sy = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
+        sob = cv2.bitwise_or(sx.astype('uint8'), sy.astype('uint8'))
+        img = cv2.cvtColor(sob, cv2.COLOR_GRAY2BGR)
+    elif ftype == "canny":
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        can = cv2.Canny(gray, 100, 200)
+        img = cv2.cvtColor(can, cv2.COLOR_GRAY2BGR)
+    elif ftype == "cartoon":
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        gray = cv2.medianBlur(gray, 5)
+        edges = cv2.adaptiveThreshold(
+            gray, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY, 9, 9
+        )
+        color = cv2.bilateralFilter(image, 9, 300, 300)
+        img = cv2.bitwise_and(color, color, mask=edges)
+    return img
+def main():
+    cap = cv2.VideoCapture(0)
+    if not cap.isOpened():
+        print("Cannot open camera")
+        return
+    ftype = "original"
+    print("Keys: r=Red, g=Green, b=Blue, s=Sobel, c=Canny, t=Cartoon, q=Quit")
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            print("Cant recieve frame")
+            break
+        out = apply_filter(frame, ftype)
+        cv2.imshow("Filter", out)
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord("r"):
+            ftype = "red_tint"
+        if key == ord("g"):
+            ftype = "green_tint"
+        if key == ord("b"):
+            ftype = "blue_tint"
+        if key == ord("s"):
+            ftype = "sobel"
+        if key == ord("c"):
+            ftype = "canny"
+        if key == ord("t"):
+            ftype = "cartoon"
+        if key == ord("q"):
+            break
+    cap.release()
+    cv2.destroyAllWindows()
+if __name__ == "__main__":
+    main()
