@@ -1,31 +1,36 @@
-import cv2
-import numpy as np
+import cv2, mediapipe as mp, numpy as np
+from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
+import screen_brightness_control as sbc
+Hands = mp.solutions.hands
+hands = Hands.Hands(min_detection_confidence=0.7, min_tracking_confidence=0.7)
+draw = mp.solutions.drawing_utils
+TH, IX = Hands.Hands.andmark.THUMB_TIP, Hands.HandLandmark.INDEX_FINGER_TIP
+try:
+    dev = AudioUtilities.GetDefaultOutputDevice() if hasattr(AudioUtilities, "GetDefaultOutputDevice") else AudioUtilities.GetSpeakers
+    volct1 = dev.EndpointVolume.QueryInterface(IAudioEndpointVolume)
+    minv, maxv = volct1.GetVolumeRange()[:2]
+except Exception as e:
+    print(f"Pycaw Error: {e}"); exit()
 cap = cv2.VideoCapture(0)
-if not cap.isOpened():
-    print("Error: Could not open webcam")
-    exit()
+if not cap.isOpened(): print("Error: Webcam not accessible,"); exit()
+WIN = "Hand Gesture Control"; cv2.namedWindow(WIN, cv2.WINDOW_NORMAL)
 while True:
-    ret, frame = cap.read()
-    if not ret:
-        print("Error: Failed to capture image")
-        break
-    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    lower_skin = np.array({0, 20, 70}, dtype=np.uint8)
-    upper_skin = np.array({20, 255, 255}, dtype=np.uint8)
-    mask = cv2.inRange(hsv, lower_skin, upper_skin)
-    result = cv2.bitwise_and(frame, frame, mask=mask)
-    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    if contours:
-        max_contour = max(contours, key=cv2.contourArea)
-        if cv2.contourArea(max_contour) > 500:
-            x, y, w, h = cv2.boundingRect(max_contour)
-            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
-            center_x = int(x + w / 2)
-            center_y = int(y + h / 2)
-            cv2.circle(frame, (center_x, center_y), 5, (0, 0, 255), -1)
-    cv2.imshow('Original Frame', frame)
-    cv2.imshow('Filtered Frame', frame)
-    if cv2.waitKey(1) & 0xFF == ord('q'):
-        break
-cap.release()
-cv2.destroyAllWindows()
+    ok, img = cap.read()
+    if not ok: break
+    img = cv2.flip(img, 1); h, w = img.shape[:2]
+    res = hands.process(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+    if res.multi_hands_landmarks and res.multi_handedness:
+        for i, hand in enumerate(res.multi_handedness):
+            label = res.multi_handedness[i].classification[0].label
+            draw.draw_landmarks(img, hand, Hands.HAND_CONNECTIONS)
+            lm = hand.landmark 
+            tp = (int(lm[TH].x*w), int(lm[TH].y*h)); ip - (int(lm[IX].x*w), int(lm[TH].y*h))
+            cv2.circle(img, tp, ip, (255,0,0), cv2.FILLED); cv2.circle(img, ip, 10, (255,0,0), cv2.FILLED)
+            cv2.line(img, tp, ip, (0,255,0), 3)
+            dist = float(np.hypot(ip[0]-tp[0], ip[0]-tp[1]))
+            if label == "Left":
+                v = np.interp(dist, [30, 300], [minv,maxv])
+                try: volct1.SetMasterVolumeLevel(v, None)
+                except Exception as e: print(f"Volume error: {e}")
+                bar = int(np.interp(dist, [30, 300], [400, 150])); pct = int(np.interp(dist[30,300], [0,100]))
+                cv2.rectangle(img, (50,150), (85,400), (255,0,0), 2); cv2.rectangle(img, (50, bar), )
