@@ -1,32 +1,129 @@
 import requests
-general_url = "https://uselessfacts.jsph.pl/random.json?language=en"
-technology_url = "https://uselessfacts.jsph.pl/category/Technology.json?language=en"
-history_url = "https://uselessfacts.jsph.pl/category/History.json?language=en"
-science_url = "https://uselessfacts.jsph.pl/category/Science.json?language=en"
-def get_fact(url, label):
-    response = requests.get(url)
-    if response.status_code == 200:
-        fact_data = response.json()
-        print(label + ": " + fact_data['text'])
-    else:
-        print("Failed to fetch text")
-while True:
-    print("\nChoose an option:")
-    print("1. General Fact")
-    print("2. Technology Fact")
-    print("3. History Fact")
-    print("4. Science Fact")
-    print("q. Quit")
-    user_input = input("Enter your choice:")
-    if user_input.lower() == "q":
-        break
-    elif user_input == "1":
-        get_fact(general_url, "General Fact")
-    elif user_input == "2":
-        get_fact(technology_url, "Technology Fact")
-    elif user_input == "3":
-        get_fact(history_url, "History Fact")
-    elif user_input == "4":
-        get_fact(science_url, "Science Fact")
-    else:
-        print("Invalid Choice")
+
+from config import HF_API_KEY
+
+ 
+
+MODEL_ID = "facebook/bart-large-mnli"
+
+API_URL = f"https://router.huggingface.co/hf-inference/models/{MODEL_ID}"
+
+HEADERS = {"Authorization": f"Bearer {HF_API_KEY}"}
+
+TOPICS = ["Sports", "Technology", "Business", "Politics", "Health"]
+
+ 
+
+def ask_hf(headline: str):
+
+    payload = {"inputs": headline, "parameters": {"candidate_labels": TOPICS}}
+
+    r = requests.post(API_URL, headers=HEADERS, json=payload, timeout=30)
+
+    if not r.ok:
+
+        raise RuntimeError(f"HF error {r.status_code}: {r.text}")
+
+    return r.json()  # returns a LIST of {"label": ..., "score": ...}
+
+ 
+
+def best_topic(preds: list):
+
+    best = max(preds, key=lambda x: x["score"])
+
+    return best["label"], best["score"]
+
+ 
+
+def bar(score: float) -> str:
+
+    pct = score * 100
+
+    blocks = int(pct // 10)
+
+    return "█" * blocks + "░" * (10 - blocks)
+
+ 
+
+def show(headline: str, preds: list):
+
+    top_label, top_score = best_topic(preds)
+
+    print("\n" + "=" * 60)
+
+    print("????️ News Topic Classifier")
+
+    print("=" * 60)
+
+    print("Headline:", headline)
+
+    print(f"Best topic: {top_label}")
+
+    print(f"Confidence: {round(top_score*100,1)}% [{bar(top_score)}]")
+
+ 
+
+    print("\nTop 3 guesses:")
+
+    top3 = sorted(preds, key=lambda x: x["score"], reverse=True)[:3]
+
+    for i, p in enumerate(top3, start=1):
+
+        print(f"{i}. {p['label']:<11} {round(p['score']*100,1)}% [{bar(p['score'])}]")
+
+    print("=" * 60)
+
+ 
+
+def main():
+
+    print("Welcome! Type a news headline and I'll guess the topic.")
+
+    print("Topics:", ", ".join(TOPICS))
+
+    print("Type 'exit' to stop.\n")
+
+ 
+
+    while True:
+
+        headline = input("Headline: ").strip()
+
+        if headline.lower() == "exit":
+
+            print("Bye! Keep coding ????")
+
+            break
+
+        if not headline:
+
+            print("Please type a headline (not empty).\n")
+
+            continue
+
+        try:
+
+            preds = ask_hf(headline)
+
+            if isinstance(preds, list) and preds and "label" in preds[0]:
+
+                show(headline, preds)
+
+            else:
+
+                print("Oops! Unexpected reply:", preds)
+
+        except Exception as e:
+
+            print("\n⚠️ Oops! Something went wrong.")
+
+            print("Reason:", e)
+
+            print("Tip: Check HF_API_KEY + internet.\n")
+
+ 
+
+if __name__ == "__main__":
+
+    main()
