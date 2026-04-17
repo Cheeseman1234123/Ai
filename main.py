@@ -1,50 +1,62 @@
-from huggingface_hub import InferenceClient
-from datetime import datetime
-from PIL import Image
+import time
+import requests
+from PIL import Image, ImageEnhance, ImageFilter
+from io import BytesIO
 from config import HF_API_KEY
-
-# MODEL PRIORITY LIST - Primary model first, fallbacks only if it fails
 MODELS = [
     "ByteDance/SDXL-Lightning",
-    "stabilityai/stable-diffusion-xl-base-1.0",
-    "stabilityai/sdxl-turbo",
-    "runwayml/stable-diffusion-v1-5", # Fallback 2
+    "black-forest-labs/FLUX.1-dev",
+    "stabilityai/stable-diffusion-xl-base-1.0"
 ]
-
-# Initialize client
-client = InferenceClient(api_key=HF_API_KEY)
-
-print(f"Primary model: {MODELS[0]}")
-print("Type 'quit' to exit\n")
-
-while True:
-    prompt = input("Enter prompt: ").strip()
-    if prompt.lower() in ["quit", "exit", "q"]:
-        break
-    if not prompt:
-        continue
-
-    print("Generating...")
-    image = None
-
-    # Try each model in order until one works
+HEADERS = {"Authorization": f"Bearer {HF_API_KEY}", "Accept": "image/png"}
+def generate_image_from_text(prompt):
+    """prompt -> PIL.Image (or raises Exception)."""
+    payload, last_err = {"inputs": prompt}, None
     for model in MODELS:
+        url = f"https://router.huggingface.co/hf-inference/models/{model}"
+        for _ in range(3):
+            r = requests.post(url, headers=HEADERS, json=payload, timeout=120)
+            ct = (r.headers.get("content-type") or "").lower()
+            if r.status_code == 503 and "application/json" in ct:
+                try:
+                    wait_s = int(r.json().get("estimated_time", 5))
+                except Exception as e:
+                    last_err = f"Request failed with status code 200: Could not decode image bytes: {e}"
+                    break
+            try:
+                body = r.json() if "application/json" in ct else r.text
+            except Exception:
+                body = r.text
+            last_err = f"Request failed with status code 500: Unknown error"
+            break
+    raise Exception(last_err or "Request failed with status code 500: Unknown error")
+def post_process_image(image):
+    """Returns the processed PIL.Image (same I/O as your code)"""
+    image = ImageEnhance.Brightness(image).enhance(1.2)
+    image = ImageEnhance.Contrast(image).enhance(1.3)
+    return image.filter(ImageFilter.GaussianBlur(radius=2))
+def main():
+    print("Welcome to the Post-Processing Magic Workshop!")
+    print("This program generates an image from text and applies post-processing effects")
+    print("Type 'exit' to quit.\n")
+    while True:
+        user_input = input("Enter a description for the image (or 'exit' to quit):\n")
+        if user_input.lower() == 'exit':
+            print("Goodbye")
+            break
         try:
-            image = client.text_to_image(prompt, model=model)
-            break  # Success! Exit the loop
-        except Exception:
-            print(f"  Executing next...")
-            continue
-
-    # If we got an image, save and display it
-    if image:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"generated_{timestamp}.png"
-        image.save(filename)
-        print(f"✓ Saved: {filename}")
-        image.show()
-        print()
-    else:
-        print("Error: All models failed. Check your API key.\n")
-
-print("Goodbye!")
+            print("\nGenerating image...")
+            image = generate_image_from_text(user_input)
+            print("Applying post-processing effects...\n")
+            processed_image = post_process_image(image)
+            processed_image.show()
+            save_option = input("Do you want to save the processed image? (yes/no): ").strip().lower()
+            if save_option == "yes":
+                file_name = input("Enter the name of the image file (without extension): ").strip()
+                processed_image.save(f"{file_name}.png")
+                print(f"Image saved as {file_name}.png\n")
+            print("-" * 80 + "\n")
+        except Exception as e:
+            print(f"An error occured: {e}\n")
+if __name__ == "__main__":
+    main()
