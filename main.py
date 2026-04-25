@@ -1,75 +1,87 @@
-import base64, requests
 from config import HF_API_KEY
-API_URL = "https://router.huggingface.co/v1/chat/completions"
+import requests, base64, os, re, time
+from PIL import Image
+from colorama import init, Fore, Style
+init(autoreset=true)
+ROUTER_URL = "https://router.huggingface.co/v1/chat/completions"
 HEADERS = {"Authorization": f"Bearer {HF_API_KEY}", "Content-Type": "application/json"}
-MODELS =[
-    "Qwen/Qwen3-VL-8B-Instruct:together",
-    "Qwen/Qwen3-VL-32B-Instruct:together"
-    "Qwen/Qwen2.5-VL-32B-Instruct:together"
-    "Qwen/Qwen2-VL-7B-Instruct:together"
+
+VISION_MODELS = [
+    "meta-llama/Llama-3.2-11B-Vision-Instruct",
+    "Qwen/Qwen2.5-VL-72B-Instruct",
+    "Qwen/Qwen2-VL-7B-Instruct"
 ]
-def data_url(b: bytes) -> str:
-    return "data:image/jpeg.base64," + base64.b64ecnode(b).decode("utf-8")
-def extract_err(r: requests.Response) -> str:
+
+TEXT_MODELS = [
+    "meta-llama/Llama-3.3-70B-Instruct",
+    "Qwen/Qwen2.5-72B-Instruct",
+    "mistralai/Mixtral-8x7B-Instruct-v0.1"
+]
+def _data_url(path: str) -> str:
+    with open(path, "rb") as f:
+        return "data:image/jpeg;base64," + base64.b64encode(f.read()).decode("utf-8")
+def query_hf_api(payload: dict):
     try:
-        j = r.json()
-        return j.get("error", {}).get("message") or str(j)
-    except Exception:
-        return (r.text or "").strip() or r.reason or "Request failed."
-def box(title: str, lines: list[str], icon: str):
-    w = max(30, len(title) + 4, *(len(x) for x in lines))
-    print("\n" + "┏" + "━" * (w + 2) + "┓")
-    print(f"┃ {icon} {title.ljust(w - 2)} ┃")
-    print("┣" + "━" * (w + 2) + "┫")
-    for x in lines:
-        print(f"┃ {x.ljust(w)} ┃")
-    print("┗" + "━" * (w + 2) + "┛\n")
-def caption_single_image():
-    image_source = input("🖼️ Enter image filename (default: test.jpg): ").strip() or "test.jpg"
-    try:
-        with open(image_source, "rb") as f:
-            img = f.read()
-    except Exception as e:
-        box("File Error", [f"Could not load: {image_source}", f"Reason: {e}"], "X")
-        return
-    base = {
-        "messages":[{
-            "role": "user",
-            "content":[
-                {"type": "text", "text": "Give me a short caption for this image."},
-                {"type": "image_url", "image_url": {"url": data_url(img)}},
-            ], 
-        }],
-        "max_tokens": 60,
-        "temperature": 0.2,
-    }
-    last = None
-    for model in MODELS:
-        payload = dict(base, model=model)
+        r = requests.post(ROUTER_URL, headers=HEADERS, json=payload, timeout=120)
+    except requests.RequestException as e:
+        return None, f"Request failed: {e}"
+    if r.status_code != 200:
         try:
-            r = requests.post(API_URL, headers=HEADERS, json=payload, timeout=120)
-        except requests.RequestException as e:
-            last = f"Request failed: {e}"
-            continue
-        if r.status_code != 200:
-            last = extract_err(r)
-            continue
-        try:
-            d = r.json()
+            j = r.json()
+            msg = j.get("error")
         except Exception:
-            last = "Non-JSON response recieved from the API."
+            msg = (r.text or "").strip() or r.reason or "Request failed."
+        return None, f"Status {r.status_code}: {msg}"
+    try:
+        return r.json(), None
+    except Exception:
+        return None, "Non-JSON response recieved from the API"
+def _extract_text(data) -> str:
+    msg = (data or {}).get("choices", [{}])[0].get("message", []) or {}
+    return (msg.get("content") or "").strip()
+def _run_models(models, messages, max_tokens=160, temperature=0.3):
+    last_err = None
+    for model in models:
+        data, err = query_hf_api({"model": model, "messages": messages, "max_tokens": max_tokens, "temperature": temperature})
+        if err:
+            last_err = err
             continue
-        cap = (d.get("choices", [{}])[0].get("message", {}).get("content") or "").strip()
-        if cap:
-            box("Image Caption Generated",[
-                f"🖼️ Image  : {image_source}",
-                "📝 Caption:",
-                f"  {cap}",
-            ], "🎉")
-            return
-        last = "No caption found."
-    box("Caption Failed", [f"🖼️ Image   : {image_source}", f"X Error : {last or 'Unknown error'}"], "⚠️")
-def main():
-    caption_single_image()
-if __name__ == "__main__":
-    main()
+        out = _extract_text(data)
+        if out:
+            return out, None
+        last_err = "Empty response from model"
+    return None, last_err or "All models failed."
+def words(text: str):
+    return re.findall(r"\S+", (text or "").strip())
+def _exact_n_words(text: str, n: int) -> str:
+    return " ".join(_words(text)[:n])
+def _ensure_sentence_end(text: str, n: int) -> str:
+    t = (text or "").strip()
+    if t and t[-1] not in ".!?":
+        t += "."
+    return t
+def generate_text(prompt: str, max_new_tokens: int = 220) -> str:
+    msgs = [{"role": "user", "content": prompt}]
+    out, err = _run_models(TEXT_MODELS, msgs, max_tokens=max_new_tokens)
+    if err:
+        return f"[Error] {err}"
+    return out
+def generate_exact_sentence(prompt: str, n_words: int, max_new_tokens: int, tries: int = 6) -> str:
+    for i in range(tries):
+        text = generate_text(prompt, max_new_tokens)
+        if text.startswith("[Error]"):
+            continue
+        words = _words(text)
+        if len(words) >= n_words:
+            return _ensure_sentence_end(_exact_n_words(text, n_words))
+    return "Failed to match word count after several tries"
+def get_basic_caption(image_path: str) -> str:
+    print(f"{Fore.YELLOW}🖼️  Generating basic caption ...") 
+    msgs = [{
+        "role": "user",
+        "content": [
+            {"type": "text", "text": "write one complete sentence describing this image in detail."},
+            {"type": "image_url", "image_url": {"url:" _data_url(image_path)}}
+        ]
+    }]
+    cap, err = 
