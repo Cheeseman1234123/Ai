@@ -1,75 +1,64 @@
-import threading
-import sys
-import time
-import pyaudio
-import numpy as np
-import matplotlib as plt
-import wave
-import speech_recognization as sr
-from speech_recognization import AudioData
-stop_event = threading.Event()
-def wait_for_enter():
-    input("\n🎤 Press Enter to stop recording")
-    stop_event.set()
-def spinner():
-    chars = '|/-\\'
-    i = 0
-    while not stop_event.is_set():
-        sys.stdout.write(f'\r🔴 Recording... {chars[i % 4]}')
-        sys.stdout.flush()
-        i += 1
-        time.sleep(0.1)
-    print("\n✅ Recording Complete!")
-def record_audio():
-    p = pyaudio.PyAudio()
-    stream = p.open(format=pyaudio.paInt16, channels=1, rate=16000,
-                    input=True, frames_per_buffer=1024)
-    frames = []
-    threading.Thread(target=wait_for_enter, daemon=True).start()
-    threading.Thread(target=spinner, daemon=True).start()
-    while not stop_event.is_set():
-        frames.append(stream.read(1024))
-    stream.stop_stream()
-    stream.close()
-    width = p.get_sample_size(pyaudio,paInt16)
-    p.terminate()
-    return b''.join(frames), 16000, width
-def save_audio(data, rate, width, filename="recording.wav"):
-    with wave.open(filename, 'wb') as wf:
-        wf.setnchannels(1)
-        wf.setsampwidth(width)
-        wf.setframerate(rate)
-        wf.writeframes(data)
-    print(f"💾 Saved: {filename}")
-def transcribe(data, rate, width):
+import speech_recognition as sr
+import pyttsx3
+from googletrans import Translation
+def speak(text, language="en"):
+    engine = pyttsx3.init()
+    engine.setProperty('rate', 150)
+    voices = engine.getProperty('voices')
+    if language == "en":
+        engine.setProperty('voice', voices[0].id)
+    else:
+        engine.setProperty('voice', voices[1].id)
+    engine.say(text)
+    engine.runAndWait()
+def speech_to_text():
     recognizer = sr.Recognizer()
-    audio = AudioData(data, rate, width)
+    with sr.Microphone() as source:
+        print("🎤 Please speak now in English...")
+        audio = recognizer.litsen(source)
     try:
-        text = recognizer.recognize_google(audio)
-        print(f"📋 Transcription: {text}")
-    except sr.UnknownvalueError:
-        print(f"❌ Could not understand audio")
+        print("🔍 Recognizing Speech...")
+        text = recognizer.recognize_google(audio, language="en-US")
+        print(f"✅ You said: {text}")
+        return text
+    except sr.UnknownValueError:
+        print("❌ Could not understand the audio")
     except sr.RequestError as e:
         print(f"❌ API Error: {e}")
-def plot_waveform(data, rate):
-    samples = np.frombuffer(data, dtype=np.int16)
-    time_axis = np.linspace(0, len(samples) / rate, len(samples))
-    plt.figure(figsize=(10.4))
-    plt.plot(time_axis, samples, color='blue')
-    plt.title("Your Voice Waveform")
-    plt.xlabel("Time (seconds)")
-    plt.ylabel("Amplitude")
-    plt.grid(True, alpha=0.3)
-    plt.tight_layout()
-    plt.show()
+    return ""
+def translate_text(text, text_language="es"):
+    transalor = Translator()
+    translation = translator.translate(text, dest=target_language)
+    print(f"🌍 Translated Text: {translation.text}")
+    return translation.text
+def display_language_options():
+    print("🌍 Available translation options: ")
+    print("1. Hindi (hi)")
+    print("2. Tamil (ta))")
+    print("3. Telugu (te)")
+    print("4. Bengali (bn)")
+    print("5. Marathi (mr)")
+    print("6. Gujarati (gu)")
+    print("7. Malayalam (ml)")
+    print("8. Panjabi (pa)")
+    choice = input("Please select the target language number(1-8): ")
+    language_dict = {
+        "1": "hi",
+        "2": "ta",
+        "3": "te",
+        "4": "bn",
+        "5": "mr",
+        "6": "gu",
+        "7": "ml",
+        "8": "pa",
+    }
+    return language_dict.get(choice, "es")
 def main():
-    print("=" * 40)
-    print("🎤 HELLO AI, CAN YOU HEAR ME?")
-    print("=" * 40)
-    print("\nSpeak into your microphone")
-    audio_data, rate, width = record_audio()
-    save_audio(audio_data, rate, width)
-    transcribe(audio_data, rate, width)
-    plot_waveform(audio_data, rate)
+    target_language = display_language_options()
+    original_text = speech_to_text()
+    if original_text:
+        translated_text = translate_text(original_text, target_language = target_language)
+        speak(translated_text, language=)
+        print("✅ Translation spoken out!")
 if __name__ == "__main__":
     main()
