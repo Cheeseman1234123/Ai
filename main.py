@@ -1,59 +1,145 @@
-from hf import generate_response
-import io
+# main.py
+from io import BytesIO
+import requests
 import streamlit as st
-CSS = """
-<style>
-.history-wrap {max-height: 420px; overflow-y: auto; padding-right: 6px;}
-.qa-card{
-    border: 1px solid #e6e6e6;
-    background: #ffffff;
-    border-radius: 10px;
-    padding: 14px 16px;
-    margin: 10px 0;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.04);
-}
-.q{font-weight: 700; color: #0a6ebd; margin-bottom: 8px;}
-.a{white-space: pre-wrap; color: #333; line-height: 1.5;}
-</style>
-"""
-def export_bytes(history):
-    text = "".join([f"Q{i}: {h['question']}\nA{i}: {h['answer']}\n\n" for i, h in enumerate(history, 1)])
-    return io.BytesIO(text.encode("utf-8"))
-def setup_ui():
-    st.set_page_config(page_title="AI Teaching Assistant", layout="centered")
-    st.title("🤖 AI Teaching Assistant")
-    st.write("Ask me anything about various subjects, and I'll provide an insightful answer.")
-    st.session_state.setdefault("history", [])
-    col_clear, col_export = st.columns([1, 2])
-    with col_clear:
-        if st.button("🧹 Clear Conversation"):
-            st.session_state.history = []
-            st.rerun()
-    with col_export:
-        if st.session_state.history:
-            st.download_button(
-                label="📤 Export Chat History",
-                data=export_bytes(st.session_state.history),
-                file_name="AI_Teaching_Assistant_Conversation.txt",
-                mime="text/plain",
-            )
-    user_input = st.text_input("Enter your question here:")
-    if st.button("Ask"):
-        q = user_input.strip()
-        if q:
-            with st.spinner("Generating AI response..."):
-                a = generate_response(q, temperature=0.3)
-            st.session_state.history.insert(0, {"question": q, "answer": a})
-            st.rerun()
-        else:
-            st.warning("⚠️ Please enter a question before clicking Ask.")
-    st.markdown("### Conversation History")
-    st.markdown(CSS, unsafe_allow_html=True)
-    cards = []
-    for i, h in enumerate(st.session_state.history, 1):
-        cards.append(f'<div class="qa-card"><div class="q">Q{i}: {h["question"]}</div><div class="a">')
-        st.markdown('<div class="history-wrap">' + "".join(cards) +"</div>", unsafe_allow_html=True)
+from huggingface_hub import InferenceClient
+
+import config
+
+MODEL_ID = "stabilityai/stable-diffusion-3-medium-diffusers"
+FILTER_API_URL = "https://filters-zeta.vercel.app/api/filter"
+
+ENHANCE_SYS = (
+    "Improve prompts for text-to-image. Return ONLY the enhanced prompt. "
+    "Add subject, style, lighting, camera angle, background, colors. Keep it safe."
+)
+
+# This is only for image quality guidance, not safety filtering
+NEGATIVE = "low quality, blurry, distorted, watermark, text, cropped"
+
+img_client = InferenceClient(provider="hf-inference", api_key=config.HF_API_KEY)
+
+
+def check_prompt_with_filter_api(prompt: str):
+    try:
+        response = requests.post(
+            FILTER_API_URL,
+            json={"prompt": prompt},
+            timeout=10,
+        )
+        response.raise_for_status()
+        data = response.json()
+
+        if not isinstance(data, dict):
+            return {"ok": False, "reason": "Invalid filter API response."}
+
+        return data
+
+    except Exception as e:
+        return {
+            "ok": False,
+            "reason": f"Filter API error: {str(e)}",
+        }
+
+
+def enhance_prompt(raw: str) -> str:
+    from hf import generate_response
+
+    out = generate_response(
+        f"{ENHANCE_SYS}\nUser prompt: {raw}",
+        temperature=0.4,
+        max_tokens=220,
+    )
+    return (out or raw).strip()
+
+
+def gen_image(prompt: str):
+    filter_result = check_prompt_with_filter_api(prompt)
+    if not filter_result.get("ok"):
+        return None, f"⚠️ Prompt blocked by safety filter. {filter_result.get('reason', 'Unsafe prompt')}"
+
+    try:
+        return img_client.text_to_image(
+            prompt=prompt,
+            negative_prompt=NEGATIVE,
+            model=MODEL_ID,
+        ), None
+
+    except Exception as e:
+        msg = str(e)
+
+        if "negative_prompt" in msg or "unexpected keyword" in msg:
+            try:
+                return img_client.text_to_image(
+                    prompt=prompt,
+                    model=MODEL_ID,
+                ), None
+            except Exception as e2:
+                msg = str(e2)
+
+        if any(x in msg for x in ["402", "Payment Required", "pre-paid credits"]):
+            return None, "❌ Image backend requires credits or model not available on hf-inference.\n\nRaw error: " + msg
+
+        if "404" in msg or "Not Found" in msg:
+            return None, "❌ Model not served on this provider route (hf-inference).\n\nRaw error: " + msg
+
+        return None, "Error during image generation: " + msg
+
+
 def main():
-    setup_ui()
+    st.set_page_config(page_title="Safe AI Image Generator", layout="centered")
+    st.title("🖼️ Safe AI Image Generator")
+    st.info("Flow: Enter a prompt → enhance it → check it using the deployed safety API → generate the image.")
+
+    with st.form("image_form"):
+        raw = st.text_area(
+            "Image Description",
+            height=120,
+            placeholder="Example: A cozy cabin in snowy mountains at sunrise, cinematic lighting",
+        )
+        submit = st.form_submit_button("Generate Image")
+
+    if submit:
+        raw = raw.strip()
+
+        if not raw:
+            st.warning("⚠️ Please enter an image description.")
+            return
+
+        raw_check = check_prompt_with_filter_api(raw)
+        if not raw_check.get("ok"):
+            st.error(f"⚠️ Prompt blocked. {raw_check.get('reason', 'Unsafe prompt')}")
+            return
+
+        with st.spinner("Enhancing your prompt..."):
+            final_prompt = enhance_prompt(raw)
+
+        enhanced_check = check_prompt_with_filter_api(final_prompt)
+        if not enhanced_check.get("ok"):
+            st.error(f"⚠️ Enhanced prompt blocked. {enhanced_check.get('reason', 'Unsafe prompt')}")
+            return
+
+        st.markdown("#### Enhanced Prompt")
+        st.code(final_prompt)
+
+        with st.spinner("Generating image..."):
+            img, err = gen_image(final_prompt)
+
+        if err:
+            st.error(err)
+            return
+
+        st.image(img, caption="Generated Image", use_container_width=True)
+        st.session_state.generated_image = img
+    img = st.session_state.get("generated_image")
+    if img:
+        buf = BytesIO()
+        img.save(buf, format="PNG")
+        st.download_button(
+            "📥 Download Image",
+            buf.getvalue(),
+            "ai_generated_image.png",
+            "image/png",
+        )
 if __name__ == "__main__":
     main()
