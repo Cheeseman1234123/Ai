@@ -1,145 +1,92 @@
-# main.py
+# main_part1 (Streamlit) 
+import io, re
 from io import BytesIO
-import requests
 import streamlit as st
 from huggingface_hub import InferenceClient
-
 import config
+# Switch provider by changing the import line:
+from groq import generate_response
+# from hf import generate_response 
 
-MODEL_ID = "stabilityai/stable-diffusion-3-medium-diffusers"
-FILTER_API_URL = "https://filters-zeta.vercel.app/api/filter"
+MATH_SYSTEM = """You are a Math Mastermind.
+Solve with clear step-by-step reasoning, correct notation, and a final answer.
+Verify when possible; mention an alternative method briefly if relevant."""
 
-ENHANCE_SYS = (
-    "Improve prompts for text-to-image. Return ONLY the enhanced prompt. "
-    "Add subject, style, lighting, camera angle, background, colors. Keep it safe."
-)
-
-# This is only for image quality guidance, not safety filtering
-NEGATIVE = "low quality, blurry, distorted, watermark, text, cropped"
-
-img_client = InferenceClient(provider="hf-inference", api_key=config.HF_API_KEY)
-
-
-def check_prompt_with_filter_api(prompt: str):
-    try:
-        response = requests.post(
-            FILTER_API_URL,
-            json={"prompt": prompt},
-            timeout=10,
-        )
-        response.raise_for_status()
-        data = response.json()
-
-        if not isinstance(data, dict):
-            return {"ok": False, "reason": "Invalid filter API response."}
-
-        return data
-
-    except Exception as e:
-        return {
-            "ok": False,
-            "reason": f"Filter API error: {str(e)}",
-        }
-
-
-def enhance_prompt(raw: str) -> str:
-    from hf import generate_response
-
-    out = generate_response(
-        f"{ENHANCE_SYS}\nUser prompt: {raw}",
-        temperature=0.4,
-        max_tokens=220,
-    )
-    return (out or raw).strip()
-
-
-def gen_image(prompt: str):
-    filter_result = check_prompt_with_filter_api(prompt)
-    if not filter_result.get("ok"):
-        return None, f"⚠️ Prompt blocked by safety filter. {filter_result.get('reason', 'Unsafe prompt')}"
-
-    try:
-        return img_client.text_to_image(
-            prompt=prompt,
-            negative_prompt=NEGATIVE,
-            model=MODEL_ID,
-        ), None
-
-    except Exception as e:
-        msg = str(e)
-
-        if "negative_prompt" in msg or "unexpected keyword" in msg:
-            try:
-                return img_client.text_to_image(
-                    prompt=prompt,
-                    model=MODEL_ID,
-                ), None
-            except Exception as e2:
-                msg = str(e2)
-
-        if any(x in msg for x in ["402", "Payment Required", "pre-paid credits"]):
-            return None, "❌ Image backend requires credits or model not available on hf-inference.\n\nRaw error: " + msg
-
-        if "404" in msg or "Not Found" in msg:
-            return None, "❌ Model not served on this provider route (hf-inference).\n\nRaw error: " + msg
-
-        return None, "Error during image generation: " + msg
-
-
+CHAT_CSS = """
+<style>
+.wrap {max-height: 520px; overflow-y: auto; padding-right: 6px;}
+.card{border:1px solid #e6e6e6;background:#fff;border-radius:10px;padding:14px 16px;margin:10px 0;
+box-shadow:0 1px 2px rgba(0,0,0,0.04);}
+.q{font-weight:700;color:#0a6ebd;margin-bottom:8px;}
+.meta{display:inline-block;background:#FF9800;color:#fff;padding:2px 8px;border-radius:12px;font-size:12px;margin-left:8px}
+.a{white-space:pre-wrap;color:#333;line-height:1.5;}
+</style>
+"""
+def export_txt(history):
+    txt = "".join([f"Q{i}: {h['question']}\nA{i}: {h['answer']}\n\n" for i, h in enumerate(history, 1)])
+    bio = io.BytesIO(txt.encode("utf-8")); bio.seek(0); return bio
+def teaching_answer(q: str, level: str) -> str:
+    return generate_response(q, temperature=0.3, max_tokens=1024)
+def math_answer(q: str, level: str) -> str:
+    prompt = f"{MATH_SYSTEM}\n\nDifficulty: {level}\nMath Problem: {q}"
+    return generate_response(prompt, temperature=0.3, max_tokens=1024)
+def run_ai_teaching_assistant():
+    st.title("🤖 AI Teaching Assistant")
+    st.session_state.setdefault("history_ata", [])
+    c1, c2 = st.columns([1, 2])
+    if c1.button("🧹 Clear", key="c_ata"): st.session_state.history_ata = []; st.rerun()
+    if st.session_state.history_ata:
+        c2.download_button("📄 Export", export_txt(st.session_state.history_ata),
+                           "AI_Teaching_Assistant_Conversation.txt", "text/plain")
+    q = st.text_input("Enter your question:", key="q_ata")
+    if st.button("Ask", key="a_ata"):
+        if not q.strip(): st.warning("⚠️ Enter a question.")
+        else:
+            with st.spinner("Thinking..."):
+                st.session_state.history_ata.append({"question": q.strip(), "answer": teaching_answer(q.strip())})
+            st.rerun()
+    if not st.session_state.history_ata: return
+    st.markdown(CHAT_CSS, unsafe_allow_html=True)
+    html = '<div class="wrap">'
+    for i, qa in enumerate(st.session_state.history_ata, 1):
+        html += f'<div class="card"><div class="q">Q{i}: {qa["question"]}</div><div class="a">{qa["answer"]}</div></div>'
+    st.markdown(html + "</div>", unsafe_allow_html=True)
+def run_math_mastermind():
+    st.title("🧮 Math Mastermind")
+    st.session_state.setdefault("history_mm", [])
+    st.session_state.setdefault("k_mm", [])
+    c1, c2 = st.columns([1, 2])
+    if c1.button("🧹 Clear", key="c_mm"): st.session_state.history_mm = []; st.rerun()
+    if st.session_state.history_mm:
+        c2.download_button("📄 Export", export_txt(st.session_state.history_ata),
+                           "Math_Mastermind_Solutions.txt", "text/plain")
+        with st.form("mm_form", clear_on_submit=True):
+            q = st.text_area("Math problem:", height=100, key=f"mm_{st.session_state.k_mm}")
+            a, b = st.columns([3, 1])
+            go = a.form_submit_button("Solve", use_container_width=True)
+            lvl = b.select_box("Level", {"Basic", "Intermediate", "Advanced"}, index=1) 
+            if go:
+                if not q.strip(): st.warning("⚠️ Enter a problem.")
+                else:
+                    with st.spinner("Solving..."):
+                        ans=math_answer(q.strip(), lvl)
+                    st.session_state.history_mm.insert(0, "question": q.strip(), "answer": ans, "difficulty": lvl) 
+                    st.session_state.k_mm += 1; st.rerun()
+    if not st.session_state.history_mm: return
+    st.markdown(CHAT_CSS, unsafe_allow_html=True)
+    html = '<div class="wrap">'
+    for i, qa in enumerate(st.session_state.history_mm, 1):
+        html += (f'<div class="card"><div class="q">Q{i}: {qa["question"]}'
+                 f'<span class="meta">{qa["difficulty"]}</span></div>'
+                 f'<div class="a">{qa["answer"]}</div></div>')
+    st.markdown(html + "</div>", unsafe_allow_html=True)
+def run_safe_ai_image_generator():
+    st.info("Paste Part 2 code to enable safe AI Image Generator.")
 def main():
-    st.set_page_config(page_title="Safe AI Image Generator", layout="centered")
-    st.title("🖼️ Safe AI Image Generator")
-    st.info("Flow: Enter a prompt → enhance it → check it using the deployed safety API → generate the image.")
-
-    with st.form("image_form"):
-        raw = st.text_area(
-            "Image Description",
-            height=120,
-            placeholder="Example: A cozy cabin in snowy mountains at sunrise, cinematic lighting",
-        )
-        submit = st.form_submit_button("Generate Image")
-
-    if submit:
-        raw = raw.strip()
-
-        if not raw:
-            st.warning("⚠️ Please enter an image description.")
-            return
-
-        raw_check = check_prompt_with_filter_api(raw)
-        if not raw_check.get("ok"):
-            st.error(f"⚠️ Prompt blocked. {raw_check.get('reason', 'Unsafe prompt')}")
-            return
-
-        with st.spinner("Enhancing your prompt..."):
-            final_prompt = enhance_prompt(raw)
-
-        enhanced_check = check_prompt_with_filter_api(final_prompt)
-        if not enhanced_check.get("ok"):
-            st.error(f"⚠️ Enhanced prompt blocked. {enhanced_check.get('reason', 'Unsafe prompt')}")
-            return
-
-        st.markdown("#### Enhanced Prompt")
-        st.code(final_prompt)
-
-        with st.spinner("Generating image..."):
-            img, err = gen_image(final_prompt)
-
-        if err:
-            st.error(err)
-            return
-
-        st.image(img, caption="Generated Image", use_container_width=True)
-        st.session_state.generated_image = img
-    img = st.session_state.get("generated_image")
-    if img:
-        buf = BytesIO()
-        img.save(buf, format="PNG")
-        st.download_button(
-            "📥 Download Image",
-            buf.getvalue(),
-            "ai_generated_image.png",
-            "image/png",
-        )
+    st.sidebar.title("Choose AI Feature")
+    opt = st.sidebar.select_box("", ["AI Teaching Assistant", "Math Mastermind", "Safe AI Image Generator"])
+    if opt == "AI Teaching Assistant": run_ai_teaching_assistant()
+    elif opt == "Math Mastermind": run_math_mastermind()
+    else: run_safe_ai_image_generator()
 if __name__ == "__main__":
     main()
